@@ -36,6 +36,28 @@ public class OrderServiceCreateTests
         Assert.Equal(380m, result.Value!.Items.Single().UnitPriceSnapshot);
     }
 
+    [Theory]
+    [InlineData(CustomerTier.Standard, 3300)] // 無折扣
+    [InlineData(CustomerTier.Silver, 3135)]   // 5%：3300 * 0.95
+    [InlineData(CustomerTier.Gold, 2970)]     // 10%：3300 * 0.90
+    public async Task CreateOrder_SnapshotIsRawPrice_DiscountAppliedOnce(CustomerTier tier, decimal expectedTotal)
+    {
+        using var db = TestSetup.CreateContext();
+        var service = TestSetup.CreateOrderService(db);
+        var customer = TestSetup.AddCustomer(db, tier);
+        var product = TestSetup.AddProduct(db, unitPrice: 3300m);
+
+        var result = await service.CreateOrderAsync(customer.Id, new[] { new NewOrderLine(product.Id, 1) });
+
+        Assert.True(result.Success);
+        // 快照永遠是未折扣的原價，折扣不可烘焙進 UnitPriceSnapshot
+        Assert.Equal(3300m, result.Value!.Items.Single().UnitPriceSnapshot);
+
+        // 折扣只能經 CalculateTotal 套用一次（Gold：3300 * 0.9 = 2970，而非 2970 * 0.9 = 2673）
+        var saved = await service.GetOrderAsync(result.Value.Id);
+        Assert.Equal(expectedTotal, service.CalculateTotal(saved!));
+    }
+
     [Fact]
     public async Task CreateOrder_DecrementsProductStock()
     {
